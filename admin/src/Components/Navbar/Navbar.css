@@ -1,0 +1,57 @@
+.navbar{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 15px 60px;
+    box-shadow: 0 1px 3px -2px #000;
+    margin-bottom: 1px;
+    background-color: white;
+}
+
+.navbar-logo img{
+    width: 70px;
+}
+
+.navbar-logo{
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    justify-content: center;
+}
+.logo-name{
+    font-size: 26px;
+    font-weight: 600;
+    margin: 0;
+   padding: 0;
+   line-height: 0.1;
+   color: blueviolet;
+}
+
+.logo-admin{
+    color: red;
+    font-size: 16px;
+}
+.nav-profile{
+    width: 75px;
+}
+
+@media(max-width: 800px){
+    .navbar{
+        padding: 15px 30px;
+    }
+    .navbar-logo img{
+        width: 50px;
+    }
+.logo-name{
+    font-size: 20px;
+}
+
+.logo-admin{
+    color: red;
+    font-size: 12px;
+}
+    .nav-profile{
+        width: 60px;
+    }
+}
+
