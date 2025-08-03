@@ -11,6 +11,7 @@ const cors = require("cors");
 const { type } = require("os");
 
 const JWT_SECRET = process.env.JWT_SECRET;
+const BASE_URL = process.env.BASE_URL;
 
 app.use(express.json());
 app.use(cors());
@@ -45,8 +46,9 @@ app.post("/upload", upload.single('product'), (req, res) => {
         }
         res.json({
             success: 1,
-            image_url: `http://localhost:${port}/images/${req.file.filename}`
+            image_url: `${BASE_URL}/images/${req.file.filename}`
         });
+
     } catch (error) {
         console.error("Upload Error:", error);
         res.status(500).json({ success: 0, message: "Internal Server Error" });
