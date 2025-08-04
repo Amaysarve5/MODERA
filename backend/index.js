@@ -12,8 +12,13 @@ const cors = require("cors");
 const JWT_SECRET = process.env.JWT_SECRET;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${port}`; // fallback for dev
 
+// ✅ CORS Fix - allow frontend domains
+app.use(cors({
+    origin: ['https://modera.onrender.com', 'http://localhost:5173'],
+    credentials: true
+}));
+
 app.use(express.json());
-app.use(cors());
 
 // Database connection with MongoDB
 mongoose.connect(process.env.MONGODB_URL);
@@ -34,7 +39,7 @@ const upload = multer({ storage: storage });
 
 app.use('/images', express.static('upload/images'));
 
-//  Updated: Use BASE_URL instead of localhost for image_url
+// Image Upload Endpoint
 app.post("/upload", upload.single('product'), (req, res) => {
     try {
         if (!req.file) {
