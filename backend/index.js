@@ -8,10 +8,9 @@ const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const path = require("path");
 const cors = require("cors");
-const { type } = require("os");
 
 const JWT_SECRET = process.env.JWT_SECRET;
-const BASE_URL = process.env.BASE_URL;
+const BASE_URL = process.env.BASE_URL || `http://localhost:${port}`; // fallback for dev
 
 app.use(express.json());
 app.use(cors());
@@ -35,7 +34,7 @@ const upload = multer({ storage: storage });
 
 app.use('/images', express.static('upload/images'));
 
-// Image Upload Endpoint
+//  Updated: Use BASE_URL instead of localhost for image_url
 app.post("/upload", upload.single('product'), (req, res) => {
     try {
         if (!req.file) {
