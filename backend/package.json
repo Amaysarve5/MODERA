@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+    "start": "node index.js",
+    "fix-image-urls": "node scripts/fix-image-urls.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
@@ -16,5 +18,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.16.5",
     "multer": "^2.0.2"
+    ,
+    "cloudinary": "^1.37.0"
   }
 }

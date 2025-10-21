@@ -6,11 +6,30 @@ const app = express();
 const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
+const fs = require('fs');
+const cloudinary = require('cloudinary').v2;
 const path = require("path");
 const cors = require("cors");
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${port}`; // fallback for dev
+
+// Helper: normalize image URLs so deployed frontend doesn't try to load from localhost
+function normalizeImageUrl(url, baseForResponse) {
+    if (!url || typeof url !== 'string') return url;
+    // If it's already an absolute URL and not localhost, return it
+    try {
+        const parsed = new URL(url);
+        if (parsed.hostname !== 'localhost' && parsed.hostname !== '127.0.0.1') return url;
+        // If hostname is localhost, replace origin with baseForResponse
+        return `${baseForResponse}/images/${parsed.pathname.split('/').pop()}`;
+    } catch (e) {
+        // Not an absolute URL, could be a relative path like /images/xxx
+        if (url.startsWith('/images')) return `${baseForResponse}${url}`;
+        // if it's just a filename
+        return `${baseForResponse}/images/${url}`;
+    }
+}
 
 // ✅ CORS Fix - allow frontend domains
 app.use(cors({
@@ -28,16 +47,43 @@ app.get("/", (req, res) => {
     res.send("Express app is running");
 });
 
-// Image Storage Engine
-const storage = multer.diskStorage({
-    destination: './upload/images',
-    filename: (req, file, cb) => {
-        return cb(null, `${file.fieldname}_${Date.now()}${path.extname(file.originalname)}`);
-    }
-});
+// Configure Cloudinary (if env vars provided)
+if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+    cloudinary.config({
+        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+        api_key: process.env.CLOUDINARY_API_KEY,
+        api_secret: process.env.CLOUDINARY_API_SECRET,
+    });
+}
+
+// Use memoryStorage so we can either upload to Cloudinary or write to disk as a fallback
+const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
-app.use('/images', express.static('upload/images'));
+// Serve uploaded images from absolute path to avoid path issues on hosts like Render
+app.use('/images', express.static(path.join(__dirname, 'upload', 'images')));
+
+// Temporary debug route to list uploaded images and their public URLs
+// Access: GET /debug-images
+app.get('/debug-images', (req, res) => {
+    const imagesDir = path.join(__dirname, 'upload', 'images');
+    const configuredBase = process.env.BASE_URL ? process.env.BASE_URL.replace(/\/$/, '') : null;
+    const requestBase = `${req.protocol}://${req.get('host')}`;
+    const baseForResponse = configuredBase || requestBase;
+
+    const fs = require('fs');
+    fs.readdir(imagesDir, (err, files) => {
+        if (err) {
+            console.error('Debug images read error:', err);
+            return res.status(500).json({ success: 0, error: 'Could not read images directory' });
+        }
+        const imageFiles = files.filter((f) => !f.startsWith('.')).map((f) => ({
+            filename: f,
+            url: `${baseForResponse}/images/${f}`
+        }));
+        res.json({ success: 1, count: imageFiles.length, images: imageFiles });
+    });
+});
 
 // Image Upload Endpoint
 app.post("/upload", upload.single('product'), (req, res) => {
@@ -48,9 +94,52 @@ app.post("/upload", upload.single('product'), (req, res) => {
                 message: "No file uploaded or multer failed to parse the file"
             });
         }
-        res.json({
-            success: 1,
-            image_url: `${BASE_URL}/images/${req.file.filename}`
+
+        // Create a deterministic filename (without path) to use as public_id when uploading to Cloudinary
+        const filenameBase = `product_${Date.now()}`;
+        const ext = path.extname(req.file.originalname) || '.png';
+        const filename = `${filenameBase}${ext}`;
+
+        // Build base for response (used when returning disk-based URLs)
+        const configuredBase = process.env.BASE_URL ? process.env.BASE_URL.replace(/\/$/, '') : null;
+        const requestBase = `${req.protocol}://${req.get('host')}`;
+        const baseForResponse = configuredBase || requestBase;
+
+        // If Cloudinary is configured, upload buffer to Cloudinary and return secure URL
+        if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+            const uploadStream = cloudinary.uploader.upload_stream({
+                folder: process.env.CLOUDINARY_FOLDER || 'modera_products',
+                public_id: filenameBase,
+                resource_type: 'image',
+                overwrite: true,
+            }, (error, result) => {
+                if (error) {
+                    console.error('Cloudinary upload error:', error);
+                    return res.status(500).json({ success: 0, message: 'Cloudinary upload failed' });
+                }
+                return res.json({ success: 1, image_url: result.secure_url });
+            });
+            // Send buffer to upload stream
+            uploadStream.end(req.file.buffer);
+            return;
+        }
+
+        // Fallback: write file to disk (existing behavior) then return disk URL
+        const destPath = path.join(__dirname, 'upload', 'images');
+        // ensure directory exists
+        fs.mkdir(destPath, { recursive: true }, (dirErr) => {
+            if (dirErr) {
+                console.error('Could not create images directory:', dirErr);
+                return res.status(500).json({ success: 0, message: 'Server error creating directory' });
+            }
+            const outPath = path.join(destPath, filename);
+            fs.writeFile(outPath, req.file.buffer, (writeErr) => {
+                if (writeErr) {
+                    console.error('Write file error:', writeErr);
+                    return res.status(500).json({ success: 0, message: 'Failed to save file' });
+                }
+                return res.json({ success: 1, image_url: `${baseForResponse}/images/${filename}` });
+            });
         });
 
     } catch (error) {
@@ -111,6 +200,15 @@ app.post('/removeproduct', async (req, res) => {
 app.get('/allproducts', async (req, res) => {
     let products = await Product.find({});
     console.log("all products fetched");
+    const baseForResponse = process.env.BASE_URL ? process.env.BASE_URL.replace(/\/$/, '') : `${req.protocol}://${req.get('host')}`;
+    // Normalize image URLs before sending
+    products = products.map(p => {
+        const prod = p.toObject ? p.toObject() : p;
+        if (prod.image && typeof prod.image === 'string') {
+            prod.image = normalizeImageUrl(prod.image, baseForResponse);
+        }
+        return prod;
+    });
     res.send(products);
 });
 
@@ -169,7 +267,13 @@ app.get('/newcollection', async (req, res) => {
     let products = await Product.find({});
     let newcollection = products.slice(1).slice(-8);
     console.log("new collection fetched");
-    res.send(newcollection);
+    const baseForResponse = process.env.BASE_URL ? process.env.BASE_URL.replace(/\/$/, '') : `${req.protocol}://${req.get('host')}`;
+    const normalized = newcollection.map(p => {
+        const prod = p.toObject ? p.toObject() : p;
+        if (prod.image && typeof prod.image === 'string') prod.image = normalizeImageUrl(prod.image, baseForResponse);
+        return prod;
+    });
+    res.send(normalized);
 });
 
 // Popular in Women
@@ -177,7 +281,13 @@ app.get('/popularinwomen', async (req, res) => {
     let products = await Product.find({ category: "women" });
     let popular_in_women = products.slice(0, 4);
     console.log("popular in women");
-    res.send(popular_in_women);
+    const baseForResponse = process.env.BASE_URL ? process.env.BASE_URL.replace(/\/$/, '') : `${req.protocol}://${req.get('host')}`;
+    const normalized = popular_in_women.map(p => {
+        const prod = p.toObject ? p.toObject() : p;
+        if (prod.image && typeof prod.image === 'string') prod.image = normalizeImageUrl(prod.image, baseForResponse);
+        return prod;
+    });
+    res.send(normalized);
 });
 
 // Middleware for token check
